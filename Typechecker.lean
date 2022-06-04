@@ -1,14 +1,11 @@
 import Std.Data.AssocList
-import Std.Data.HashSet
 import Lean
 open Std Lean Elab Meta
 
 inductive TType : Type where
   | unit : String → TType
   | arrow : TType → TType → TType
-  deriving Repr, BEq, Inhabited, DecidableEq
-
-def Ctx := AssocList String TType
+  deriving BEq, Inhabited, DecidableEq
 
 inductive Term : Type where
   | var : String → Term
@@ -16,41 +13,7 @@ inductive Term : Type where
   | app : Term → Term → Term
   deriving BEq, DecidableEq
 
-declare_syntax_cat stlc_type
-syntax:0 "Unit" ident : stlc_type
-syntax:50 stlc_type " → " stlc_type : stlc_type
-syntax:99 " ( " stlc_type " ) " : stlc_type
-partial def elabSTLCType : Syntax → MetaM Expr
-  | `(stlc_type| Unit $id:ident) => do
-    let id := mkStrLit id.getId.toString
-    mkAppM ``TType.unit #[id]
-  | `(stlc_type| $l:stlc_type → $r:stlc_type) => do
-    let l ← elabSTLCType l
-    let r ← elabSTLCType r
-    mkAppM ``TType.arrow #[l, r]
-  | `(stlc_type| ($t:stlc_type) ) => elabSTLCType t
-  | _ => throwUnsupportedSyntax
-
-declare_syntax_cat stlc
-syntax:0 ident : stlc
-syntax:89 " λ " ident " : " stlc_type " , " stlc : stlc
-syntax:1 stlc stlc : stlc
-syntax:99 " ( " stlc " ) " : stlc
-partial def elabSTLC : Syntax → MetaM Expr
-  | `(stlc| $id:ident ) => mkAppM ``Term.var  #[mkStrLit id.getId.toString]
-  | `(stlc| λ $id:ident : $t:stlc_type , $tm:stlc) => do
-    let id := mkStrLit id.getId.toString
-    let t ← elabSTLCType t
-    let tm ← elabSTLC tm
-    mkAppM ``Term.abs #[id, t, tm]
-  | `(stlc| $funct:stlc $argt:stlc) => do
-    let funct ← elabSTLC funct
-    let argt ← elabSTLC argt
-    mkAppM ``Term.app #[funct, argt]
-  | `(stlc| ($tm:stlc)) => elabSTLC tm
-  | `($tk) => withRef tk (throwError "Error HEre")
-
-elab "⟪" tm:stlc "⟫" : term => elabSTLC tm
+def Ctx := AssocList String TType
 
 inductive HasType : (ctx : Ctx) → Term → TType → Prop where
   | var : ∀ t (name : String), ctx.find? name = some t → HasType ctx (.var name) t
@@ -62,7 +25,8 @@ inductive HasType : (ctx : Ctx) → Term → TType → Prop where
         → HasType ctx tm₂ t₁
         → HasType ctx (.app tm₁ tm₂) t₂
 
-def typecheck : (ctx : Ctx) → (tm : Term) → Option TType
+
+def Term.typecheck : (ctx : Ctx) → (tm : Term) → Option TType
   | ctx, Term.var name => ctx.find? name
   | ctx, Term.abs name TArg tmBody =>
     let ctx₂ := ctx.insert name TArg
@@ -74,6 +38,7 @@ def typecheck : (ctx : Ctx) → (tm : Term) → Option TType
         | (.some (.arrow T₁₁ T₁₂), .some T₂) =>
           if (T₁₁ = T₂) then .some T₁₂ else .none
         | (_, _) => .none
+
 
 theorem Prod.eq_split : (a, b) = (c, d) → a = c ∧ b = d := by
   intro h; cases h
@@ -89,19 +54,19 @@ theorem If.ttype_decided {a b t t' : TType}
   · contradiction
 
 theorem typecheck_sound (ctx: Ctx) (tm : Term) (t : TType)
-  : (typecheck ctx tm = .some t) → HasType ctx tm t := by
+  : (Term.typecheck ctx tm = .some t) → HasType ctx tm t := by
   induction tm generalizing ctx t with
   | var name =>
-    simp [typecheck]; intro hfind
+    simp [Term.typecheck]; intro hfind
     exact .var t name hfind
   | abs name argₜ tm hind =>
-    simp [typecheck]; split
+    simp [Term.typecheck]; split
     · rename_i P t' R
       intro hteq; injection hteq with hteq; rewrite [← hteq]; clear hteq
       exact .abs name argₜ t' tm (hind (AssocList.insert ctx name argₜ) t' R)
     · intros; contradiction
   | app tm₁ tm₂ hind₁ hind₂ =>
-    simp [typecheck]; split
+    simp [Term.typecheck]; split
     · rename_i t₁₁ t₁₂ t₂ hp
       intro hq; cases Prod.eq_split hp
       · rename_i hterm₁type hterm₂type
@@ -114,15 +79,14 @@ theorem typecheck_sound (ctx: Ctx) (tm : Term) (t : TType)
           exact .app t₁₁ t₁₂ tm₁ tm₂ ht₁ ht₂
     · intro; contradiction
 
-
 theorem typecheck_complete (ctx : Ctx) (tm : Term) (t : TType)
-  : HasType ctx tm t → typecheck ctx tm = .some t := by
+  : HasType ctx tm t → Term.typecheck ctx tm = .some t := by
   intros hhty
   induction hhty with
   | var t name hfind =>
-    simp [typecheck]; rw [hfind]
+    simp [Term.typecheck]; rw [hfind]
   | abs name argₜ bodyₜ body hht hbodytck =>
-    simp [typecheck]; split
+    simp [Term.typecheck]; split
     · rename_i t' hargtck
       simp
       rewrite [hbodytck] at hargtck
@@ -132,7 +96,7 @@ theorem typecheck_complete (ctx : Ctx) (tm : Term) (t : TType)
       have hf := htof bodyₜ hbodytck
       contradiction
   | app argₜ bodyₜ funcₜₘ argₜₘ hhtbody hhtarg htck_func htck_arg =>
-    simp[typecheck]; split
+    simp[Term.typecheck]; split
     · rename_i t₁₁ t₁₂ t₂ hp
       simp_all
       cases hp
@@ -151,45 +115,94 @@ theorem typecheck_complete (ctx : Ctx) (tm : Term) (t : TType)
         have sndEq := Eq.symm hsndt
         exact (hprod argₜ bodyₜ argₜ fstEq sndEq)
 
-syntax "[ " ident " := " stlc "] " stlc : term
+#reduce Term.typecheck ((AssocList.empty.insert "x" (.arrow (.unit "a") (.unit "b"))).insert "y" (.unit "a")) (.app (.var "x") (.var "y"))
 
-#print List
+-- Syntax trees
 
-def HashSet.joinList (h₁ : HashSet String) (l : List String) : HashSet String := match l with
-  | .nil => h₁
-  | .cons s xs => joinList (h₁.insert s) xs
+declare_syntax_cat stlc_type
+syntax:0 ident : stlc_type
+syntax:50 stlc_type " → " stlc_type : stlc_type
+syntax:99 " ( " stlc_type " ) " : stlc_type
 
-
-def HashSet.union (h₁ : HashSet String) (h₂ : HashSet String) : HashSet String 
-  := HashSet.joinList h₁ (h₂.toList)
-
-
-def Term.freeVars : (tm : Term) → (bound : HashSet String) → (acc : HashSet String) → HashSet String
-  | (.var name), bound, acc => if (bound.contains name) then acc else acc.insert name
-  | (.abs name _ body), bound, acc => freeVars body (bound.insert name) acc
-  | (.app tm₁ tm₂), bound, acc => 
-      HashSet.union (freeVars tm₁ bound acc) (freeVars tm₂ bound acc)
-
-def freshVarHelper (freeVars: List String) (acc : String) → (acc : )
-
-def freshVar (freeVars : HashSet String) : (∃ s, (freeVars.contains s) = false) := match (
-
-
-syntax " [ " ident " := " term " ] " term : term
-
-def Term.subst (name : String) : (src : Term) → (into : Term) → Term
-  -- | src@(.var n), into => if (name = n) then into else src
-  -- | src@(.abs n argT body) => if (name = n) then src else (.abs n argT )
-  | src, _ => src
-
-def 
 
 macro_rules
-  | `([ $name:ident := $into:term ] $src:term) => do
-    let name := quote name.getId.toString
-    `(Term.subst $name $src $into)
+  | `(stlc_type| $id:ident) =>
+    let id := quote id.getId.toString
+    `(TType.unit $id)
+  | `(stlc_type| $l:stlc_type → $r:stlc_type) => `(TType.arrow $l $r)
+  | `(stlc_type| ($t:stlc_type)) => `($t)
+
+declare_syntax_cat stlc
+syntax:0 ident : stlc
+syntax:89 " λ " ident " : " stlc_type " , " stlc : stlc
+syntax:1 stlc stlc : stlc
+syntax:99 " ( " stlc " ) " : stlc
+syntax " ⟪ " stlc " ⟫ " : term
+
+macro_rules
+  | `(stlc| $id:ident ) =>
+    let id := quote id.getId.toString
+    `(Term.var $id)
+  | `(stlc| λ $id:ident : $t:stlc_type , $tm:stlc) =>
+    let id := quote id.getId.toString
+    `(Term.abs $id $t $tm)
+  | `(stlc| $funct:stlc $argt:stlc) =>
+    `(Term.app $funct $argt)
+  | `(stlc| ($tm:stlc)) => `($tm)
+  | `(⟪ $tm:stlc ⟫) => `($tm)
+
+syntax " ⦃ " (ident " : " stlc_type),* " ⦄ " : term
+macro_rules
+  | `(⦃ $[$key:ident : $value:stlc_type],* ⦄) =>
+    let key := key.map (quote ·.getId.toString)
+    `([$[($key, $value)],*].toAssocList)
+
+-- Pretty printers
+
+def TType.str (pr : Nat) : (t : TType) → String
+  | .unit s => s
+  | .arrow a b => if (pr > 3)
+    then ("(" ++ (a.str pr)  ++ " → " ++ (b.str pr) ++ ")")
+    else (a.str 4)  ++ " → " ++ (b.str 3)
+
+instance : Repr TType where
+  reprPrec a _ := TType.str 3 a
+
+def Term.str (pr : Nat) : (tm : Term) → String
+  | .var name => name
+  | .abs name argT body =>
+    let s := "λ " ++ name ++ " : " ++ (argT.str 3) ++ ", " ++ (body.str 3)
+    if pr > 3 then "(" ++ s ++ ")" else s  
+  | .app tm₁@(.abs _ _ _) tm₂ => (tm₁.str 4) ++ " " ++ tm₂.str 3 
+  | .app tm₁ tm₂ => (tm₁.str 3) ++ " " ++ (tm₂.str 3)
+
+instance : Repr Term where
+  reprPrec a _ := Term.str 3 a
 
 
+def String.wrap (s left right : String) := left ++ s ++ right
+
+def Ctx.str (pr : Nat) (ctx : Ctx) : String := (match ctx with
+  | .nil => ""
+  | .cons name type (.nil) => name ++ " : " ++ type.str pr
+  | .cons name type xs => name ++ " : " ++ type.str pr ++ ", "
+).wrap "{" "}"
+
+instance : Repr Ctx where
+  reprPrec ctx pr := ctx.str pr
+
+instance : Repr (Option TType) where
+  reprPrec opt pr := match opt with
+    | .some type => reprPrec type 3
+    | .none => "No type"
+
+-- Examples
 
 
-#reduce [a := ⟪ b ⟫] ⟪ c ⟫
+#eval ⟪ λ x : a, x ⟫
+#eval Term.typecheck ⦃⦄ ⟪ λ x : a, λ y : b, λ z : d, x ⟫
+#eval Term.typecheck ⦃x : a → b → c⦄ ⟪ x ⟫
+#eval Term.typecheck ⦃ x : α → β, y : α ⦄ ⟪ x y ⟫
+#eval Term.typecheck ⦃⦄ ⟪ (λ x : a, λ y : a → b, y x) ⟫
+
+#eval Term.typecheck ⦃z : γ⦄ ⟪ (λ x : (α → β) → γ, x) (λ y : α → β, z) ⟫
