@@ -2,19 +2,24 @@ import Std.Data.AssocList
 import Lean
 open Std Lean Elab Meta
 
+-- A type can be a string or an arrow
 inductive TType : Type where
   | unit : String → TType
   | arrow : TType → TType → TType
   deriving BEq, Inhabited, DecidableEq
 
+-- Classic term definition, no constants
 inductive Term : Type where
   | var : String → Term
   | abs : String → TType → Term → Term
   | app : Term → Term → Term
   deriving BEq, DecidableEq
 
+-- A context map  free variables to their types
 def Ctx := AssocList String TType
 
+-- Property of a certain term having a type in a context. 
+-- This is "the" definition of having a type, so it should be examined carefully
 inductive HasType : (ctx : Ctx) → Term → TType → Prop where
   | var : ∀ t (name : String), ctx.find? name = some t → HasType ctx (.var name) t
   | abs : ∀ (name : String) TArg TBody tmBody,
@@ -25,7 +30,7 @@ inductive HasType : (ctx : Ctx) → Term → TType → Prop where
         → HasType ctx tm₂ t₁
         → HasType ctx (.app tm₁ tm₂) t₂
 
-
+-- A function to typecheck a term in a context
 def Term.typecheck : (ctx : Ctx) → (tm : Term) → Option TType
   | ctx, Term.var name => ctx.find? name
   | ctx, Term.abs name TArg tmBody =>
@@ -39,11 +44,12 @@ def Term.typecheck : (ctx : Ctx) → (tm : Term) → Option TType
           if (T₁₁ = T₂) then .some T₁₂ else .none
         | (_, _) => .none
 
-
+-- Lemma
 theorem Prod.eq_split : (a, b) = (c, d) → a = c ∧ b = d := by
   intro h; cases h
   constructor <;> rfl
 
+-- Lemma
 theorem If.ttype_decided {a b t t' : TType}
   : (Q : ((if a = b then Option.some t else Option.none) = Option.some t'))
   → a = b /\ t = t' := by
@@ -53,6 +59,7 @@ theorem If.ttype_decided {a b t t' : TType}
     · rename_i l r; injection r; assumption
   · contradiction
 
+-- Main theorem 1/2
 theorem typecheck_sound (ctx: Ctx) (tm : Term) (t : TType)
   : (Term.typecheck ctx tm = .some t) → HasType ctx tm t := by
   induction tm generalizing ctx t with
@@ -79,6 +86,7 @@ theorem typecheck_sound (ctx: Ctx) (tm : Term) (t : TType)
           exact .app t₁₁ t₁₂ tm₁ tm₂ ht₁ ht₂
     · intro; contradiction
 
+-- Main theorem 2/2
 theorem typecheck_complete (ctx : Ctx) (tm : Term) (t : TType)
   : HasType ctx tm t → Term.typecheck ctx tm = .some t := by
   intros hhty
@@ -115,10 +123,12 @@ theorem typecheck_complete (ctx : Ctx) (tm : Term) (t : TType)
         have sndEq := Eq.symm hsndt
         exact (hprod argₜ bodyₜ argₜ fstEq sndEq)
 
+-- Example or how difficult it is to construct terms at this point
 #reduce Term.typecheck ((AssocList.empty.insert "x" (.arrow (.unit "a") (.unit "b"))).insert "y" (.unit "a")) (.app (.var "x") (.var "y"))
 
 -- Syntax trees
 
+-- Syntax tree and macro rules for declaring a TType
 declare_syntax_cat stlc_type
 syntax:0 ident : stlc_type
 syntax:50 stlc_type " → " stlc_type : stlc_type
@@ -132,6 +142,7 @@ macro_rules
   | `(stlc_type| $l:stlc_type → $r:stlc_type) => `(TType.arrow $l $r)
   | `(stlc_type| ($t:stlc_type)) => `($t)
 
+-- Syntax tree and macro rules for declaring a Term
 declare_syntax_cat stlc
 syntax:0 ident : stlc
 syntax:89 " λ " ident " : " stlc_type " , " stlc : stlc
@@ -151,6 +162,7 @@ macro_rules
   | `(stlc| ($tm:stlc)) => `($tm)
   | `(⟪ $tm:stlc ⟫) => `($tm)
 
+-- Syntax and macro rules for declaring a context
 syntax " ⦃ " (ident " : " stlc_type),* " ⦄ " : term
 macro_rules
   | `(⦃ $[$key:ident : $value:stlc_type],* ⦄) =>
@@ -159,6 +171,8 @@ macro_rules
 
 -- Pretty printers
 
+-- Declaring a separate toString function, as build-in type classes handle recursion poorly
+-- pr controls brackets. 4 to enclose, 3 to not. Consistent across definitions
 def TType.str (pr : Nat) : (t : TType) → String
   | .unit s => s
   | .arrow a b => if (pr > 3)
@@ -204,5 +218,4 @@ instance : Repr (Option TType) where
 #eval Term.typecheck ⦃x : a → b → c⦄ ⟪ x ⟫
 #eval Term.typecheck ⦃ x : α → β, y : α ⦄ ⟪ x y ⟫
 #eval Term.typecheck ⦃⦄ ⟪ (λ x : a, λ y : a → b, y x) ⟫
-
 #eval Term.typecheck ⦃z : γ⦄ ⟪ (λ x : (α → β) → γ, x) (λ y : α → β, z) ⟫
