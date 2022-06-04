@@ -198,7 +198,7 @@ instance : Repr (Option TType) where
 
 -- Examples
 
-
+#eval ⟪ x ⟫
 #eval ⟪ λ x : a, x ⟫
 #eval Term.typecheck ⦃⦄ ⟪ λ x : a, λ y : b, λ z : d, x ⟫
 #eval Term.typecheck ⦃x : a → b → c⦄ ⟪ x ⟫
